@@ -359,8 +359,164 @@ def add_common_runtime_args(parser):
     parser.add_argument("--device", default="auto")
 
 
+def run_explain(args):
+    """지정된 문장들에 대해 Integrated Gradients 및 Occlusion 분석을 수행하고 비교 출력합니다."""
+    import sys
+    sys.path.append(str(Path(__file__).parent))
+
+    device = get_device(args.device)
+    model, tokenizer = load_model_and_tokenizer(args.model_dir, device)
+
+    texts = args.text or []
+    if args.input_file:
+        texts.extend(
+            line.strip()
+            for line in Path(args.input_file).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+
+    if not texts:
+        raise ValueError("Provide --text or --input-file.")
+
+    # XAI 모듈 임포트
+    try:
+        from explain_ig import explain_integrated_gradients
+    except ImportError:
+        print("Warning: explain_ig.py를 임포트할 수 없습니다.")
+        explain_integrated_gradients = None
+
+    try:
+        from explain_occlusion import explain_occlusion
+    except ImportError:
+        print("Warning: explain_occlusion.py를 임포트할 수 없습니다.")
+        explain_occlusion = None
+
+    results = []
+
+    for text in texts:
+        print(f"\n[문장 분석] {text}")
+        ig_res = None
+        occ_res = None
+
+        # 1. Integrated Gradients 수행
+        if (args.method in ["ig", "all"]) and explain_integrated_gradients:
+            try:
+                ig_res = explain_integrated_gradients(
+                    model=model,
+                    tokenizer=tokenizer,
+                    text=text,
+                    max_length=args.max_length,
+                    device=device,
+                    steps=args.steps
+                )
+            except Exception as e:
+                print(f"Error running Integrated Gradients: {e}")
+
+        # 2. Occlusion 수행
+        if (args.method in ["occlusion", "all"]) and explain_occlusion:
+            try:
+                occ_res = explain_occlusion(
+                    model=model,
+                    tokenizer=tokenizer,
+                    text=text,
+                    max_length=args.max_length,
+                    device=device
+                )
+            except Exception as e:
+                print(f"Error running Occlusion: {e}")
+
+        # 정보 추출
+        words = None
+        prediction = None
+        probability = None
+
+        if ig_res and ig_res.get("words"):
+            words = ig_res["words"]
+            prediction = ig_res["prediction"]
+            probability = ig_res["probability"]
+        elif occ_res and occ_res.get("words"):
+            words = occ_res["words"]
+            prediction = occ_res["prediction"]
+            probability = occ_res["probability"]
+
+        if not words:
+            print("분석 결과를 불러올 수 없습니다. 스켈레톤 파일을 확인하세요.")
+            continue
+
+        print(f"예측 결과: {LABELS[prediction]} (확률: {probability:.4f})")
+        print("-" * 60)
+
+        # 표 헤더 작성
+        header = f"| {'단어':<10} |"
+        separator = f"|{'-'*12}|"
+        if ig_res:
+            header += f" {'IG Attribution':^16} |"
+            separator += f"{'-'*18}|"
+        if occ_res:
+            header += f" {'Occlusion Score':^16} |"
+            separator += f"{'-'*18}|"
+
+        print(header)
+        print(separator)
+
+        # 각 행 출력
+        for idx, word in enumerate(words):
+            row = f"| {word:<10} |"
+            if ig_res:
+                row += f" {ig_res['scores'][idx]:^16.4f} |"
+            if occ_res:
+                row += f" {occ_res['scores'][idx]:^16.4f} |"
+            print(row)
+        print("-" * 60)
+
+        # Cosine Similarity 및 상관계수 연산 (두 지표가 모두 분석되었고 어절이 2개 이상일 때)
+        if ig_res and occ_res and len(words) > 1:
+            try:
+                ig_scores = ig_res["scores"]
+                occ_scores = occ_res["scores"]
+                n = len(ig_scores)
+
+                mean_ig = sum(ig_scores) / n
+                mean_occ = sum(occ_scores) / n
+
+                # Cosine Similarity
+                dot_product = sum(i * o for i, o in zip(ig_scores, occ_scores))
+                sq_sum_ig = sum(i * i for i in ig_scores)
+                sq_sum_occ = sum(o * o for o in occ_scores)
+                cosine_sim = dot_product / ((sq_sum_ig ** 0.5) * (sq_sum_occ ** 0.5)) if (sq_sum_ig > 0 and sq_sum_occ > 0) else 0.0
+
+                # Pearson Correlation Coefficient
+                num = sum((i - mean_ig) * (o - mean_occ) for i, o in zip(ig_scores, occ_scores))
+                den_ig = sum((i - mean_ig) ** 2 for i in ig_scores)
+                den_occ = sum((o - mean_occ) ** 2 for o in occ_scores)
+                pearson_corr = num / ((den_ig * den_occ) ** 0.5) if (den_ig > 0 and den_occ > 0) else 0.0
+
+                print(f"[기법 간 일치도 분석]")
+                print(f"- Cosine Similarity: {cosine_sim:.4f}")
+                print(f"- Pearson Correlation: {pearson_corr:.4f}")
+                print("-" * 60)
+            except Exception as e:
+                print(f"상관도 계산 중 오류: {e}")
+
+        results.append({
+            "text": text,
+            "prediction": LABELS[prediction],
+            "probability": probability,
+            "ig_result": ig_res,
+            "occlusion_result": occ_res
+        })
+
+    # JSON 저장
+    if args.output_file:
+        Path(args.output_file).write_text(
+            json.dumps(results, indent=2, ensure_ascii=False),
+            encoding="utf-8"
+        )
+        print(f"분석 결과가 {args.output_file}에 저장되었습니다.")
+
+
 def parse_args():
-    """train, eval, predict 서브커맨드와 각 옵션을 정의합니다."""
+    """train, eval, predict, explain 서브커맨드와 각 옵션을 정의합니다."""
     parser = argparse.ArgumentParser(
         description="Train and evaluate beomi/KcELECTRA-base on NSMC sentiment data."
     )
@@ -403,6 +559,16 @@ def parse_args():
     add_common_runtime_args(predict_parser)
     predict_parser.set_defaults(func=predict_texts)
 
+    explain_parser = subparsers.add_parser("explain")
+    explain_parser.add_argument("--model-dir", default="XAI/Transformer/kcelectra_nsmc_model")
+    explain_parser.add_argument("--text", action="append")
+    explain_parser.add_argument("--input-file")
+    explain_parser.add_argument("--method", choices=["ig", "occlusion", "all"], default="all")
+    explain_parser.add_argument("--steps", type=int, default=50)
+    explain_parser.add_argument("--output-file")
+    add_common_runtime_args(explain_parser)
+    explain_parser.set_defaults(func=run_explain)
+
     return parser.parse_args()
 
 
@@ -414,3 +580,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
