@@ -1,0 +1,43 @@
+{
+  "model": {
+    "base_model": "SentimentFNN",
+    "architecture": "Embedding + Flatten + Fully Connected Neural Network",
+    "task": "NSMC movie review sentiment classification",
+    "labels": {
+      "0": "negative",
+      "1": "positive"
+    },
+    "saved_model_dir": null,
+    "note": "This notebook evaluates and explains the FNN model currently loaded in memory."
+  },
+  "data": {
+    "train_file": "ratings_train.txt",
+    "test_file": "ratings_test.txt",
+    "tokenizer": "Okt.morphs(stem=True)",
+    "vocab_size": 10002,
+    "max_length": 30,
+    "padding_index": 0,
+    "unknown_index": 1
+  },
+  "training": {
+    "python": "3.11.9",
+    "model_name": "SentimentFNN",
+    "epochs_configured": 5,
+    "epochs_completed": 5,
+    "batch_size": 64,
+    "learning_rate": 0.001,
+    "embedding_dim": 100,
+    "hidden_dim": 128,
+    "device": "cuda"
+  },
+  "metrics": [
+    {
+      "split": "test",
+      "loss": 0.46091454271347293,
+      "accuracy": 0.8293898134140192,
+      "precision": 0.8401619031885016,
+      "recall": 0.8159647011632571,
+      "f1": 0.8278865329046436
+    }
+  ]
+}
