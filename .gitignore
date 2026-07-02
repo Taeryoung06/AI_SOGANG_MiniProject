@@ -3,5 +3,11 @@ __pycache__/
 .venv/
 
 # Local model outputs
+Transformer/kcelectra_nsmc_model/
 XAI/Transformer/kcelectra_nsmc_model/
 model_constructed/Transformer/kcelectra_nsmc_model/
+
+# Generated local notebook artifacts
+NUL.png
+XAI/FNN/ratings_train.txt
+XAI/FNN/ratings_test.txt
